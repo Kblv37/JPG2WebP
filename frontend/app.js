@@ -1,83 +1,85 @@
-const backendUrl = "https://jpg2webp.onrender.com"; // URL твоего сервера на Render
+const QUALITIES = [100, 90, 80, 70, 60, 50, 40, 30];
+let selectedVariant = null;
+let variants = [];
 
-document.getElementById("uploadForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
+const fileInput = document.getElementById("fileInput");
+const fileNameLabel = document.getElementById("fileName");
+const qualityOptions = document.getElementById("qualityOptions");
+const skeleton = document.getElementById("skeleton");
 
-    const fileInput = document.getElementById("fileInput");
-    if (!fileInput.files.length) {
-        alert("Выбери JPG файл!");
-        return;
-    }
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
 
-    const file = fileInput.files[0];
-    const formData = new FormData();
-    formData.append("file", file);
+  fileNameLabel.textContent = file.name;
+  skeleton.classList.remove("hidden");
+  qualityOptions.innerHTML = "";
 
-    try {
-        // Шаг 1: анализируем файл
-        const analyzeRes = await fetch(`${backendUrl}/analyze`, {
-            method: "POST",
-            body: formData
-        });
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const img = new Image();
+    img.onload = async () => {
+      const width = img.width;
+      const height = img.height;
+      const sizeMB = (file.size / 1024 / 1024).toFixed(2);
 
-        if (!analyzeRes.ok) throw new Error("Ошибка анализа файла");
-
-        const data = await analyzeRes.json();
-        const qualityDiv = document.getElementById("qualityOptions");
-        qualityDiv.innerHTML = "";
-
-        data.qualities.forEach(q => {
-            const btn = document.createElement("button");
-            btn.textContent = `${q.quality}% (${q.size_mb} MB, ${q.resolution})`;
-            btn.addEventListener("click", () => convertFile(file, q.quality));
-            qualityDiv.appendChild(btn);
-        });
-
-    } catch (err) {
-        console.error(err);
-        alert("Ошибка: не удалось подключиться к серверу.");
-    }
+      await generateVariants(img);
+      skeleton.classList.add("hidden");
+      renderQualityButtons();
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
 });
 
-async function convertFile(file, quality) {
-    const newName = prompt("Введите имя файла (без расширения)", "converted") || "converted";
+async function generateVariants(img) {
+  variants = [];
+  for (const q of QUALITIES) {
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const blob = await new Promise(res =>
+      canvas.toBlob(res, "image/webp", q / 100)
+    );
+    const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
+    variants.push({
+      quality: q,
+      resolution: `${img.width}x${img.height}`,
+      size: `${sizeMB} MB`,
+      blob,
+      width: img.width,
+      height: img.height
+    });
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("quality", quality);
-    formData.append("new_name", newName);
-    formData.append("date", prompt("Введите дату (ДДММГГГГ или ДДММГГГГЧЧММ)", ""));
+  }
+}
 
-    try {
-        const res = await fetch(`${backendUrl}/convert`, {
-            method: "POST",
-            body: formData
-        });
+function renderQualityButtons() {
+  qualityOptions.innerHTML = "";
+  variants.forEach(v => {
+    const btn = document.createElement("button");
+    btn.className = "quality-btn";
+    btn.textContent = `${v.quality}% • ${v.size} • ${v.resolution}`;
+    btn.addEventListener("click", (event) => selectQuality(v, event));
+    qualityOptions.appendChild(btn);
+  });
+}
 
-        if (!res.ok) throw new Error("Ошибка конвертации");
+function selectQuality(v, event) {
+  selectedVariant = v;
 
-        // Получаем blob файла
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
+  // Снимаем подсветку со всех кнопок
+  document.querySelectorAll(".quality-btn").forEach(btn => {
+    btn.classList.remove("active");
+  });
 
-        // Создаем ссылку для скачивания
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `${newName}.webp`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+  // Подсветка нажатой кнопки
+  event.target.classList.add("active");
 
-        // Забираем скрипт из заголовка
-        const script = res.headers.get("X-Script");
-        if (script) {
-            const scriptBox = document.getElementById("scriptBox");
-            scriptBox.textContent = script;
-            scriptBox.style.display = "block";
-        }
-
-    } catch (err) {
-        console.error(err);
-        alert("Ошибка: не удалось выполнить конвертацию.");
-    }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(selectedVariant.blob);
+  a.download = fileInput.files[0].name.replace(/\.[^/.]+$/, "") + ".webp";
+  a.click();
 }
